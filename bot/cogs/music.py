@@ -3,6 +3,7 @@ import datetime as dt
 import random
 import re
 import typing as t
+from enum import Enum
 
 import discord
 import wavelink  # Only works with wavelink 0.9
@@ -46,10 +47,21 @@ class NoPreviousTracks(commands.CommandError):
     pass
 
 
+class InvalidRepeatMode(commands.CommandError):
+    pass
+
+
+class RepeatMode(Enum):
+    NONE = 0
+    ONE = 1
+    ALL = 2
+
+
 class Queue:
     def __init__(self):
         self._queue = []
         self.position = 0
+        self.repeat_mode = RepeatMode.NONE
 
     @property
     def is_empty(self):
@@ -90,6 +102,22 @@ class Queue:
     def add(self, *args):
         self._queue.extend(args)# Extend = Append multiple
 
+    def get_next_track(self):
+        if not self._queue:
+            raise QueueIsEmpty
+        
+        self.position+=1
+
+        if self.position < 0:
+            return None
+        elif self.position > len(self._queue) - 1:
+            if self.repeat_mode == RepeatMode.ALL:
+                self.position = 0
+            else:
+                return None
+
+        return self._queue[self.position]
+
     def shuffle(self):
         if not self._queue:
             raise QueueIsEmpty
@@ -99,16 +127,13 @@ class Queue:
         self._queue = self._queue[:self.position + 1]
         self._queue.extend(upcoming)
 
-    def get_next_track(self):
-        if not self._queue:
-            raise QueueIsEmpty
-        
-        self.position+=1
-
-        if self.position > len(self._queue) - 1:
-            return None
-        
-        return self._queue[self.position]
+    def set_repeat_mode(self, mode):
+        if mode == "none":
+            self.repeat_mode = RepeatMode.NONE
+        elif mode == "1":
+            self.repeat_mode = RepeatMode.ONE
+        elif mode == "all":
+            self.repeat_mode = RepeatMode.ALL
 
     def empty(self):
         self._queue.clear()
@@ -197,6 +222,9 @@ class Player(wavelink.Player):
         except QueueIsEmpty:
             pass
 
+    async def repeat_track(self):
+        await self.play(self.queue.current_track)
+
 class Music(commands.Cog, wavelink.WavelinkMixin):
     def __init__(self, bot):
         self.bot=bot
@@ -217,7 +245,10 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
     @wavelink.WavelinkMixin.listener("on_track_end")
     @wavelink.WavelinkMixin.listener("on_track_exception")
     async def on_player_stop(self, node, payload):
-        await payload.player.advance()
+        if payload.player.queue.repeat_mode == RepeatMode.ONE:
+            await payload.player.repeat_track()
+        else:
+            await payload.player.advance()
 
     async def cog_check(self, ctx):
         if isinstance(ctx.channel, discord.DMChannel):
@@ -366,6 +397,15 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
     async def shuffle_command_error(self, ctx, exc):
         if isinstance(exc, QueueIsEmpty):
             await ctx.send("The queue could not be shuffled as it is currently empty.")
+
+    @commands.command(name="repeat", aliases=["loop"])
+    async def repeat_command(self, ctx, mode: str):
+        if mode not in ("none", "1", "all"):
+            raise InvalidRepeatMode
+        
+        player= self.get_player(ctx)
+        player.queue.set_repeat_mode(mode)
+        await ctx.send(f"The repeat mode has been set to {mode}.")
 
     @commands.command(name="queue")
     async def queue_command(self, ctx, show: t.Optional[int] = 10):
