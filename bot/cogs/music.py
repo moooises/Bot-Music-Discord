@@ -78,8 +78,9 @@ class Queue:
     def current_track(self):
         if not self._queue:
             raise QueueIsEmpty
-        
-        return self._queue[self.position]
+
+        if self.position <= len(self._queue) - 1:
+            return self._queue[self.position]
 
     @property
     def upcoming(self):
@@ -137,6 +138,7 @@ class Queue:
 
     def empty(self):
         self._queue.clear()
+        self.position=0
 
 class Player(wavelink.Player):
     def __init__(self, *args, **kwargs):
@@ -213,7 +215,7 @@ class Player(wavelink.Player):
             return tracks[OPTIONS[reaction.emoji]]
         
     async def start_playback(self):
-        await self.play(self.queue.first_track)
+        await self.play(self.queue.current_track)
 
     async def advance(self):
         try:
@@ -323,10 +325,10 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
     
     @play_command.error
     async def play_command_error(self, ctx, exc):
-        if isinstance(exc,PlayerIsAlreadyPlaying):
-            await ctx.send("Already playing.")
-        elif isinstance(exc, QueueIsEmpty):
+        if isinstance(exc, QueueIsEmpty):
             await ctx.send("No songs to play as the queue is empty")
+        elif isinstance(exc, NoVoiceChannel):
+            await ctx.send("No suitable voice channel was provided.")
 
     @commands.command(name="pause")
     async def pause_command(self, ctx):
@@ -422,7 +424,11 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         )
         embed.set_author(name="Query Results")
         embed.set_footer(text=f"Requested by {ctx.author.display_name}", icon_url=ctx.author.avatar_url)
-        embed.add_field(name="Currently playing", value=player.queue.current_track.title, inline=False)
+        embed.add_field(
+            name="Currently playing",
+            value=getattr(player.queue.current_track, "title", "No tracks currently playing."),
+            inline=False
+        )
         if upcoming := player.queue.upcoming:
             embed.add_field(
                 name="Next up",
@@ -437,7 +443,15 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         if isinstance(exc, QueueIsEmpty):
             await ctx.send("The queue is currently empty.")
 
+    @commands.command(name="credits")
+    async def credits_command(self, ctx):
+        player= self.get_player(ctx)
+        await ctx.send("Realizado usando los video tutoriales del canal de Youtube 'Carberra': https://www.youtube.com/watch?v=tZPrkKT9QHc&list=PLYeOw6sTSy6ZIfraPiUsJWuxjqoL47U3u")
 
+    @commands.command(name="info")
+    async def info_command(self, ctx):
+        player= self.get_player(ctx)
+        await ctx.send("Aun no he puesto nada aquí.")
 
 
 def setup(bot):
