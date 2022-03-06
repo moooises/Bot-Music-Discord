@@ -1,8 +1,8 @@
 import asyncio
 import datetime as dt
+import enum
 import random
 import re
-from sqlite3 import Timestamp
 import typing as t
 from enum import Enum
 
@@ -14,6 +14,7 @@ from discord.ext import commands
 
 URL_REGEX = r"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'\".,<>?«»“”‘’]))"
 LYRICS_URL = "https://some-random-api.ml/lyrics?title="
+HZ_BANDS = (20, 40, 63, 100, 150, 250, 400, 450, 630, 1000, 1600, 2500, 4000, 10000, 16000)
 OPTIONS = {
     "1️⃣": 0,
     "2⃣": 1,
@@ -21,8 +22,6 @@ OPTIONS = {
     "4⃣": 3,
     "5⃣": 4,
 }
-
-
 
 
 class AlreadyConnectedToChannel(commands.CommandError):
@@ -74,6 +73,18 @@ class MinVolume(commands.CommandError):
 
 
 class NoLyricsFound(commands.CommandError):
+    pass
+
+
+class InvalidEQPreset(commands.CommandError):
+    pass
+
+
+class NonExistentEQBand(commands.CommandError):
+    pass
+
+
+class EQGainOutOfBounds(commands.CommandError):
     pass
 
 
@@ -170,6 +181,7 @@ class Player(wavelink.Player):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.queue=Queue()
+        self.eq_levels = [0.] * 15
 
     async def connect(self, ctx, channel=None):
         if self.is_connected:
@@ -561,8 +573,50 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
     async def lyrics_command_error(self, ctx, exc):
         if isinstance(exc, NoLyricsFound):
             await ctx.send("No lyrics could be found.")
-    
 
+    @commands.command(name="eq")
+    async def eq_command(self, ctx, preset: str):
+        player = self.get_player(ctx)
+
+        eq = getattr(wavelink.eqs.Equalizer, preset, None)
+        if not eq:
+            raise InvalidEQPreset
+
+        await player.set_eq(eq())
+        await ctx.send(f"Equalizer adjusted to the {preset} preset.")
+
+    @eq_command.error
+    async def eq_command_error(self, ctx, exc):
+        if isinstance(exc, InvalidEQPreset):
+            await ctx.send("The EQ preset must be either 'flat', 'boost', 'metal' or 'piano'.")
+
+    @commands.command(name="adveq", aliases=["aeq"])
+    async def adveq_command(self, ctx, band: int, gain: float):
+        player = self.get_player(ctx)
+
+        if not 1 <= band <= 15 and band not in HZ_BANDS:
+            raise NonExistentEQBand
+        
+        if band > 15:
+            band = HZ_BANDS.index(band) + 1
+        
+        if abs(gain) > 10:
+            raise EQGainOutOfBounds
+
+        player.eq_levels[band - 1] = gain / 10
+        eq = wavelink.eqs.Equalizer(levels=[(i, gain) for i, gain in enumerate(player.eq_levels)])
+        await player.set_eq(eq)
+        await ctx.send("Equalizer adjusted.")
+
+    @adveq_command.error
+    async def adveq_command_error(self, ctx, exc):
+        if isinstance(exc, NonExistentEQBand):
+            await ctx.send(
+                "This is a 15 band equalizer -- the band number should be between 1 and 15, or one of the following "
+                "frequencies: " + ", ".join(str(b) for b in HZ_BANDS)
+            )
+        if isinstance(exc, EQGainOutOfBounds):
+            await ctx.send("The EQ gain for any band should be between 10 dB and -10 dB.")
 
 def setup(bot):
     bot.add_cog(Music(bot))
