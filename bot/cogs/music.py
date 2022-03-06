@@ -15,6 +15,7 @@ from discord.ext import commands
 URL_REGEX = r"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'\".,<>?«»“”‘’]))"
 LYRICS_URL = "https://some-random-api.ml/lyrics?title="
 HZ_BANDS = (20, 40, 63, 100, 150, 250, 400, 450, 630, 1000, 1600, 2500, 4000, 10000, 16000)
+TIME_REGEX = r"([0-9]{1,2})[:ms](([0-9]{1,2})s?)?"
 OPTIONS = {
     "1️⃣": 0,
     "2⃣": 1,
@@ -85,6 +86,10 @@ class NonExistentEQBand(commands.CommandError):
 
 
 class EQGainOutOfBounds(commands.CommandError):
+    pass
+
+
+class InvalidTimeString(commands.CommandError):
     pass
 
 
@@ -289,6 +294,7 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             await payload.player.repeat_track()
         else:
             await payload.player.advance()
+            
 
     async def cog_check(self, ctx):
         if isinstance(ctx.channel, discord.DMChannel):
@@ -670,6 +676,44 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             await ctx.send("There are no tracks in the queue.")
         elif isinstance(exc, NoMoreTracks):
             await ctx.send("That index is out of the bounds of the queue.")
+    
+    @commands.command(name="restart")
+    async def restart_command(self, ctx):
+        player = self.get_player(ctx)
+
+        if player.queue.is_empty:
+            raise QueueIsEmpty
+
+        await player.seek(0)
+        await ctx.send("Track restarted.")
+
+    @restart_command.error
+    async def restart_command_error(self, ctx, exc):
+        if isinstance(exc, QueueIsEmpty):
+            await ctx.send("There are no tracks in the queue.")
+
+    @commands.command(name="seek")
+    async def seek_command(self, ctx, position: str):
+        player = self.get_player(ctx)
+
+        if player.queue.is_empty:
+            raise QueueIsEmpty
+        
+        if not (match := re.match(TIME_REGEX, position)):
+            raise InvalidTimeString
+
+        if match.group(3):
+            secs = (int(match.group(1)) * 60) + (int(match.group(3)))
+        else:
+            secs = int(match.group(1))
+
+        await player.seek(secs * 1000)
+        await ctx.send("Seeked.")
+
+    @seek_command.error
+    async def seek_command_error(self, ctx, exc):
+        if isinstance(exc, InvalidTimeString):
+            await ctx.send("TimeString no valid. Add -s to seconds and -m to minutes. Example: +seek 1m2s")
 
 def setup(bot):
     bot.add_cog(Music(bot))
